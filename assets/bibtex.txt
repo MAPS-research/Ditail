@@ -1,0 +1,6 @@
+@article{liu2023ditail,
+  title={Diffusion Cocktail: Fused Generation from Diffusion Models},
+  author={Liu, Haoming and Guo, Yuanhe and Wang, Shengjie and Wen, Hongyi},
+  journal={arXiv preprint arXiv:xxxx.xxxxx},
+  year={2023}
+}
