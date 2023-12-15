@@ -8,8 +8,8 @@ Official implementation for "Diffusion Cocktail: Fused Generation from Diffusion
 
 ## Quick Links
  - [Project Page](https://MAPS-research.github.io/Ditail)
- - Paper Preprint (coming soon)
- - [HuggingFace Demo](https://huggingface.co/spaces/MAPS-research/Diffusion-Cocktail-Demo)
+ - [Paper Preprint](https://arxiv.org/abs/2312.08873)
+ - [HuggingFace Demo](https://huggingface.co/spaces/MAPS-research/Diffusion-Cocktail)
  - Stable Diffusion WebUI Extension (coming soon)
 
 ## Abstract
@@ -80,7 +80,7 @@ If you find our work helpful, please consider cite it as follows:
 @article{liu2023ditail,
   title={Diffusion Cocktail: Fused Generation from Diffusion Models},
   author={Liu, Haoming and Guo, Yuanhe and Wang, Shengjie and Wen, Hongyi},
-  journal={arXiv preprint arXiv:xxxx.xxxxx},
+  journal={arXiv preprint arXiv:2312.08873},
   year={2023}
 }
 ```
