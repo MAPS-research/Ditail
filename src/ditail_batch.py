@@ -13,6 +13,7 @@ from transformers import logging
 from diffusers import DDIMScheduler, StableDiffusionPipeline
 
 from ditail_utils import *
+from ditail_metrics import *
 
 # filter warnings
 logging.set_verbosity_error()
@@ -73,7 +74,7 @@ class DitailBatch(nn.Module):
     def encode_image(self, img_path):
         image_pil = T.Resize(512)(Image.open(img_path).convert('RGB'))
         image = T.ToTensor()(image_pil).unsqueeze(0).to(self.device)
-        with torch.autocast(device_type=self.device, dtype=torch.float32):
+        with torch.autocast(device_type=self.device, dtype=torch.float16):
             image = 2 * image - 1
             posterior = self.vae.encode(image).latent_dist
             latent = posterior.mean * 0.18215
@@ -83,7 +84,7 @@ class DitailBatch(nn.Module):
     def invert_image(self, cond, latent):
         self.latents = {}
         timesteps = reversed(self.scheduler.timesteps)
-        with torch.autocast(device_type=self.device, dtype=torch.float32):
+        with torch.autocast(device_type=self.device, dtype=torch.float16):
             for i, t in enumerate(timesteps):
                 cond_batch = cond.repeat(latent.shape[0], 1, 1)
                 alpha_prod_t = self.scheduler.alphas_cumprod[t]
@@ -105,7 +106,8 @@ class DitailBatch(nn.Module):
     @torch.no_grad()
     def extract_latents(self):
         # get the embeddings for pos & neg prompts
-        self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
+        if self.lora != 'none':
+            self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
         text_pos = self.tokenizer(self.pos_prompt, **self.tokenizer_kwargs)
         text_neg = self.tokenizer(self.neg_prompt, **self.tokenizer_kwargs)
         self.emb_pos = self.text_encoder(text_pos.input_ids.to(self.device))[0]
@@ -117,7 +119,7 @@ class DitailBatch(nn.Module):
 
     @torch.no_grad()
     def latent_to_image(self, latent, save_path):
-        with torch.autocast(device_type=self.device, dtype=torch.float32):
+        with torch.autocast(device_type=self.device, dtype=torch.float16):
             latent = 1 / 0.18215 * latent
             image = self.vae.decode(latent).sample[0]
             image = (image / 2 + 0.5).clamp(0, 1)
@@ -134,7 +136,8 @@ class DitailBatch(nn.Module):
     @torch.no_grad()
     def sampling_loop(self):
         # init text embeddings
-        self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
+        if self.lora != 'none':
+            self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
         text_ept = self.tokenizer('', **self.tokenizer_kwargs)
         text_pos = self.tokenizer(self.pos_prompt, **self.tokenizer_kwargs)
         text_neg = self.tokenizer(self.neg_prompt, **self.tokenizer_kwargs)
@@ -145,7 +148,7 @@ class DitailBatch(nn.Module):
         # init injection mask (optional)
         register_mask(self, self.mask, self.latents['noisy'])
         # noise sampling loop
-        with torch.autocast(device_type=self.device, dtype=torch.float32):
+        with torch.autocast(device_type=self.device, dtype=torch.float16):
             # use noisy latent as starting point
             x = self.latents[self.scheduler.timesteps[0].item()]
             # sampling loop
@@ -168,7 +171,7 @@ def main(args):
     # init experiment
     seed_everything(args.seed)
     ditail = DitailBatch(args)
-    latent_dir = f'./latent/{args.data_type}_{args.exp_id}'
+    latent_dir = f'./latent/{args.data_type}_{args.latent_id}'
     output_dir = f'./output/{args.data_type}_{args.exp_id}'
     os.makedirs(latent_dir, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
@@ -188,7 +191,8 @@ def main(args):
             ditail.pid = i+1
             ditail.img_path = metadata[i]['path']
             ditail.pos_prompt = metadata[i]['caption']
-            ditail.extract_latents()
+            if not os.path.exists(os.path.join(latent_dir, f'{i+1}.pt')):
+                ditail.extract_latents()
         # step 2: sampling stage
         ditail.load_spl_model()
         if not ditail.no_injection:
@@ -234,10 +238,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--exp_id', type=str, required=True,
-                        help='Name of the experiment directory')
-    parser.add_argument('--data_dir', type=str, required=True,
-                        help='Path to the directory of input images')
     parser.add_argument('--data_type', type=str, required=True, choices=['gen', 'real'],
                         help='Data type for batch image manipulation')
     parser.add_argument('--inv_model', type=str, default='stablediffusionapi/realistic-vision-v51',
@@ -248,9 +248,9 @@ if __name__ == "__main__":
                         help='Number of inversion steps (step 1)')
     parser.add_argument('--spl_steps', type=int, default=50,
                         help='Number of sampling steps (step 2)')
-    parser.add_argument('--alpha', type=float, default=2.0,
+    parser.add_argument('--alpha', type=float, default=3.0,
                         help='Positive prompt scaling factor')
-    parser.add_argument('--beta', type=float, default=0.5,
+    parser.add_argument('--beta', type=float, default=1.0,
                         help='Negative prompt scaling factor')
     parser.add_argument('--omega', type=float, default=7.5,
                         help='Classifier-free guidance factor')
@@ -264,5 +264,44 @@ if __name__ == "__main__":
                         help='Optional LoRA scaling weight')
     parser.add_argument('--no_injection', action="store_true",
                         help='Do not use PnP injection')
-    args = parser.parse_args()
-    main(args)
+    clip = BatchCLIP()
+    dino = DINO()
+    for alpha in [1, 2, 3, 4, 8]:
+        for omega in [7.5, 15.0]:
+            # init config
+            args = parser.parse_args()
+            src_mvid = os.path.basename(args.inv_model)
+            tgt_mvid = os.path.basename(args.spl_model)
+            if args.data_type == 'gen':
+                args.data_dir = f'./data/gemrec/{src_mvid}'
+            else:
+                args.data_dir = f'./data/coco'
+            a, b, w = int(alpha), int(args.beta), int(omega)
+            args.alpha, args.beta, args.omega = a, b, w
+            args.exp_id = f'{src_mvid}_{tgt_mvid}_{a}_{b}_{w}'
+            args.latent_id = f'{src_mvid}_{a}_{b}'
+            # run experiment
+            print('\n[Exp]:', args.exp_id)
+            main(args)
+            # evaluation
+            output_dir = f'./output/{args.data_type}_{args.exp_id}'
+            if args.data_type == 'gen':
+                clip_src = clip.compute_clip_scores(args.data_dir, data_type=args.data_type)
+                clip_out = clip.compute_clip_scores(output_dir, data_type=args.data_type)
+            else:
+                clip_src = clip.compute_clip_scores(args.data_dir, data_type=args.data_type + '_src')
+                clip_out = clip.compute_clip_scores(output_dir, data_type=args.data_type + '_tgt')
+            print(f'\n===> CLIP Score: src {clip_src:.4f} out {clip_out:.4f}')
+            dino_out = dino.compute_ssim_loss(
+                src_dir=args.data_dir,
+                tgt_dir=output_dir,
+                data_type=args.data_type
+            )
+            print(f'\n===> DINO Score: out {dino_out:.4f}')
+            if args.data_type == 'gen':
+                tgt_dir = f'./data/gemrec/{tgt_mvid}'
+            else:
+                tgt_dir = f'./data/coco_pseudo_target/{tgt_mvid}'
+            fid_src = compute_fid(args.data_dir, tgt_dir, args.data_type)
+            fid_out = compute_fid(output_dir, tgt_dir, args.data_type)
+            print(f'\n===> FID Score: src {fid_src:.2f} out {fid_out:.2f}')

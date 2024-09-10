@@ -103,7 +103,8 @@ class DitailDemo(nn.Module):
     @torch.no_grad()
     def extract_latents(self):
         # get the embeddings for pos & neg prompts
-        self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
+        if self.lora != 'none':
+            self.pos_prompt += f', {TRIGGER_WORD[self.lora]}'
         text_pos = self.tokenizer(self.pos_prompt, **self.tokenizer_kwargs)
         text_neg = self.tokenizer(self.neg_prompt, **self.tokenizer_kwargs)
         self.emb_pos = self.text_encoder(text_pos.input_ids.to(self.device))[0]

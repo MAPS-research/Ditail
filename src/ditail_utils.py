@@ -1,7 +1,4 @@
-# credits: https://github.com/MichalGeyer/pnp-diffusers/blob/main/pnp_utils.py
-
 import os
-import math
 import torch
 import random
 import numpy as np
@@ -43,6 +40,20 @@ def register_time(model, t):
             setattr(module, 't', t)
     module = model.unet.mid_block.attentions[0].transformer_blocks[0].attn1
     setattr(module, 't', t)
+    if hasattr(model, 'unet2'):
+        conv_module = model.unet2.up_blocks[1].resnets[1]
+        setattr(conv_module, 't', t)
+        for res in up_res_dict:
+            for block in up_res_dict[res]:
+                module = model.unet2.up_blocks[res].attentions[block].transformer_blocks[0].attn1
+                setattr(module, 't', t)
+        for res in down_res_dict:
+            for block in down_res_dict[res]:
+                module = model.unet2.down_blocks[res].attentions[block].transformer_blocks[0].attn1
+                setattr(module, 't', t)
+        module = model.unet2.mid_block.attentions[0].transformer_blocks[0].attn1
+        setattr(module, 't', t)
+        
 
 def register_attn_inj(model, injection_schedule):
     def sa_forward(self):
@@ -92,6 +103,12 @@ def register_attn_inj(model, injection_schedule):
             module = model.unet.up_blocks[res].attentions[block].transformer_blocks[0].attn1
             module.forward = sa_forward(module)
             setattr(module, 'injection_schedule', injection_schedule)
+    if hasattr(model, 'unet2'):
+        for res in res_dict:
+            for block in res_dict[res]:
+                module = model.unet2.up_blocks[res].attentions[block].transformer_blocks[0].attn1
+                module.forward = sa_forward(module)
+                setattr(module, 'injection_schedule', injection_schedule)
 
 def register_conv_inj(model, injection_schedule):
     def conv_forward(self):
@@ -138,6 +155,10 @@ def register_conv_inj(model, injection_schedule):
     conv_module = model.unet.up_blocks[1].resnets[1]
     conv_module.forward = conv_forward(conv_module)
     setattr(conv_module, 'injection_schedule', injection_schedule)
+    if hasattr(model, 'unet2'):
+        conv_module = model.unet2.up_blocks[1].resnets[1]
+        conv_module.forward = conv_forward(conv_module)
+        setattr(conv_module, 'injection_schedule', injection_schedule)
 
 def register_mask(model, mask_type, latent):
     h, w = latent.shape[-2:]
@@ -150,6 +171,15 @@ def register_mask(model, mask_type, latent):
     conv_module = model.unet.up_blocks[1].resnets[1]
     setattr(conv_module, 'mask_type', mask_type)
     setattr(conv_module, 'ref_shape', (h, w))
+    if hasattr(model, 'unet2'):
+        for res in res_dict:
+            for block in res_dict[res]:
+                module = model.unet2.up_blocks[res].attentions[block].transformer_blocks[0].attn1
+                setattr(module, 'mask_type', mask_type)
+                setattr(module, 'ref_shape', (h, w))
+        conv_module = model.unet2.up_blocks[1].resnets[1]
+        setattr(conv_module, 'mask_type', mask_type)
+        setattr(conv_module, 'ref_shape', (h, w))
 
 def generate_mask(x, mask_type, ref_shape):
     # init mask shape

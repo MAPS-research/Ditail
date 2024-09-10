@@ -249,7 +249,8 @@ def compute_statistics_of_path(path, model, batch_size, dims, device,
         if data_type == 'gen':
             files = [os.path.join(path, f'{i}.png') for i in range(1, 91)]
         elif data_type == 'real':
-            files = [os.path.join(path, f'{i}.png') for i in range(1, 301)]
+            postfix = 'jpg' if str(path) == 'data/coco' else 'png'
+            files = [os.path.join(path, f'{i}.{postfix}') for i in range(1, 301)]
         else:
             raise ValueError(f'Invalid data type: {data_type}')
         m, s = calculate_activation_statistics(files, model, batch_size,
